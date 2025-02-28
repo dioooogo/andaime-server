@@ -1,3 +1,5 @@
+é melhor sua abordagem ou essa do gpt:?
+
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
@@ -8,7 +10,9 @@ from typing import Optional
 from pydantic import BaseModel
 import os
 
+
 app = FastAPI()
+
 
 # CORS configuration
 origins = ["*"]
@@ -20,6 +24,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
 # RestDB Configuration
 RESTDB_URL = "https://andaimeconami-0ccc.restdb.io"
 RESTDB_KEY = "35a977b68e9beccc345bc1c7a442b99ca2861"
@@ -28,6 +33,7 @@ HEADERS = {
     "Content-Type": "application/json"
 }
 
+
 # WhatsApp API Configuration
 WHATSAPP_TOKEN = os.getenv("WHATSAPP_TOKEN", "seu_token_aqui")
 WHATSAPP_URL = "https://graph.facebook.com/v17.0/YOUR_PHONE_NUMBER_ID/messages"
@@ -35,6 +41,7 @@ WHATSAPP_HEADERS = {
     "Authorization": f"Bearer {WHATSAPP_TOKEN}",
     "Content-Type": "application/json"
 }
+
 
 class Andaime(BaseModel):
     area: str
@@ -46,6 +53,7 @@ class Andaime(BaseModel):
     leaderPhone: str
     executorPhone: str
     status: str = "active"
+
 
 async def enviar_mensagem_whatsapp(phone: str, message: str):
     try:
@@ -60,6 +68,7 @@ async def enviar_mensagem_whatsapp(phone: str, message: str):
     except Exception as e:
         print(f"Erro ao enviar mensagem WhatsApp: {str(e)}")
 
+
 async def verificar_andaimes_expirados():
     while True:
         try:
@@ -70,31 +79,58 @@ async def verificar_andaimes_expirados():
 
                 for andaime in andaimes:
                     end_date = datetime.fromisoformat(andaime['estimatedEndDate'].replace('Z', '+00:00'))
-                    days_expired = (now - end_date).days
+                    start_date = datetime.fromisoformat(andaime['startDate'].replace('Z', '+00:00'))
+                    
+                    # Pula andaimes que ainda não começaram
+                    if start_date > now:
+                        continue
+                        
+                    days_until = (end_date - now).days
 
-                    if days_expired == 0:
+                    # Notificar quando faltar 3 dias ou menos para vencer
+                    if 0 < days_until <= 3:
                         mensagem = (
-                            f"ATENÇÃO: Andaime expirado!\n"
+                            f"ATENÇÃO: Andaime próximo ao vencimento!\n"
                             f"Área: {andaime['area']}\n"
                             f"Subárea: {andaime['subArea']}\n"
                             f"Data de início: {andaime['startDate']}\n"
                             f"Data de término: {andaime['estimatedEndDate']}\n"
-                            f"Por favor, atualize a liberação do andaime imediatamente."
+                            f"Dias restantes: {days_until}\n"
+                            f"Por favor, providencie a renovação da liberação."
                         )
                         
                         await enviar_mensagem_whatsapp(andaime['leaderPhone'], mensagem)
                         await enviar_mensagem_whatsapp(andaime['executorPhone'], mensagem)
 
-                    elif days_expired > 3:
-                        await client.delete(
+                    # Notificar no dia do vencimento
+                    elif days_until == 0:
+                        mensagem = (
+                            f"ATENÇÃO: Andaime vence HOJE!\n"
+                            f"Área: {andaime['area']}\n"
+                            f"Subárea: {andaime['subArea']}\n"
+                            f"Data de início: {andaime['startDate']}\n"
+                            f"Data de término: {andaime['estimatedEndDate']}\n"
+                            f"É necessário renovar a liberação IMEDIATAMENTE."
+                        )
+                        
+                        await enviar_mensagem_whatsapp(andaime['leaderPhone'], mensagem)
+                        await enviar_mensagem_whatsapp(andaime['executorPhone'], mensagem)
+                    
+                    # Atualizar status para expirado
+                    elif days_until < 0:
+                        andaime['status'] = 'expired'
+                        await client.put(
                             f"{RESTDB_URL}/rest/scaffolds/{andaime['_id']}",
-                            headers=HEADERS
+                            headers=HEADERS,
+                            json=andaime
                         )
 
-            await asyncio.sleep(24 * 60 * 60)
+            # Verificar a cada 12 horas
+            await asyncio.sleep(12 * 60 * 60)
         except Exception as e:
             print(f"Erro na verificação de andaimes: {str(e)}")
             await asyncio.sleep(60)
+
 
 @app.get("/andaimes")
 async def get_andaimes():
@@ -113,13 +149,22 @@ async def get_andaimes():
             
             for andaime in andaimes:
                 end_date = datetime.fromisoformat(andaime['estimatedEndDate'].replace('Z', '+00:00'))
-                days_until = (end_date - now).days
-                andaime['diasAteExpiracao'] = max(0, days_until)
-                andaime['status'] = 'expirado' if days_until <= 0 else 'ativo'
+                start_date = datetime.fromisoformat(andaime['startDate'].replace('Z', '+00:00'))
+                
+                # Se a data de início ainda não chegou
+                if start_date > now:
+                    andaime['diasAteExpiracao'] = (end_date - start_date).days
+                    andaime['status'] = 'active'
+                else:
+                    days_until = (end_date - now).days
+                    andaime['diasAteExpiracao'] = max(0, days_until)
+                    # Mantém consistência com o frontend usando 'active' e 'expired'
+                    andaime['status'] = 'expired' if days_until < 0 else 'active'
             
             return andaimes
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.post("/andaimes")
 async def create_andaime(andaime: Andaime):
@@ -138,9 +183,12 @@ async def create_andaime(andaime: Andaime):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+
 @app.on_event("startup")
 async def startup_event():
+    # Iniciar tarefa de verificação de andaimes em background
     asyncio.create_task(verificar_andaimes_expirados())
+
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
