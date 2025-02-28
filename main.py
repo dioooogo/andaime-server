@@ -1,5 +1,3 @@
-é melhor sua abordagem ou essa do gpt:?
-
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
@@ -116,14 +114,23 @@ async def verificar_andaimes_expirados():
                         await enviar_mensagem_whatsapp(andaime['leaderPhone'], mensagem)
                         await enviar_mensagem_whatsapp(andaime['executorPhone'], mensagem)
                     
-                    # Atualizar status para expirado
+                    # Atualizar status para expirado e notificar
                     elif days_until < 0:
-                        andaime['status'] = 'expired'
-                        await client.put(
-                            f"{RESTDB_URL}/rest/scaffolds/{andaime['_id']}",
-                            headers=HEADERS,
-                            json=andaime
-                        )
+                        # Se passou mais de 3 dias do vencimento, deletar o registro
+                        if days_until <= -3:
+                            # Deleta o registro diretamente
+                            await client.delete(
+                                f"{RESTDB_URL}/rest/scaffolds/{andaime['_id']}",
+                                headers=HEADERS
+                            )
+                        else:
+                            # Apenas atualiza o status se ainda não passaram 3 dias
+                            andaime['status'] = 'expired'
+                            await client.put(
+                                f"{RESTDB_URL}/rest/scaffolds/{andaime['_id']}",
+                                headers=HEADERS,
+                                json=andaime
+                            )
 
             # Verificar a cada 12 horas
             await asyncio.sleep(12 * 60 * 60)
