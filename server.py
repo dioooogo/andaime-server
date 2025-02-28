@@ -1,11 +1,15 @@
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
+import httpx
+from datetime import datetime
+from typing import List, Optional
+from pydantic import BaseModel
 
 app = FastAPI()
 
+# CORS configuration
 origins = ["*"]
-
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
@@ -14,53 +18,104 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Valid keys database
-valid_keys = {
-    "9F4jDs0qLp2ZW1BvH7sRTpM8X": {"status": "ativo", "usuario": "usuario1"},
-    "3G1nQs7eYu5Kl8wZu4R2fJ6Bc": {"status": "ativo",  "usuario": "usuario2"},
-    "X8vF3cH6mZ9Rn4TqS2wJ1dL0p": {"status": "ativo", "usuario": "usuario3"},
-    "P7sM3jA1kL8bV6rT5qN0cW9eY": {"status": "ativo",  "usuario": "usuario4"},
-    "K2vL9rF0sQ8wX4pM6bC3jT1zU": {"status": "ativo", "usuario": "usuario5"},
-    "T5mB8rD0zN2qJ7vF3pX9lC4sK": {"status": "ativo",  "usuario": "usuario6"},
-    "Z1X2C3V4B5N6M7Q8W9E0R1T2Y": {"status": "ativo", "usuario": "usuario7"},
-    "U3I4O5P6L7K8J9H0G1F2D3S4A": {"status": "ativo",  "usuario": "usuario8"},
-    "Q1W2E3R4T5Y6U7I8O9P0A1S2D": {"status": "ativo", "usuario": "usuario9"},
-    "F1G2H3J4K5L6Z7X8C9V0B1N2M": {"status": "ativo",  "usuario": "usuario10"},
-    "P9O8I7U6Y5T4R3E2W1Q0A9S8D": {"status": "ativo", "usuario": "usuario11"},
-    "L0K9J8H7G6F5D4S3A2Z1X0C9V": {"status": "ativo",  "usuario": "usuario12"},
-    "M1N2B3V4C5X6Z7L8K9J0H1G2F": {"status": "ativo", "usuario": "usuario13"},
-    "Q9W8E7R6T5Y4U3I2O1P0A9S8D": {"status": "ativo",  "usuario": "usuario14"},
-    "Z8X7C6V5B4N3M2L1K0J9H8G7F": {"status": "ativo", "usuario": "usuario15"},
-    "A1S2D3F4G5H6J7K8L9Q0W2E3R": {"status": "ativo",  "usuario": "usuario16"},
-    "T9Y8U7I6O5P4L3K2J1H0G9F8D": {"status": "ativo", "usuario": "usuario17"},
-    "S2D3F4G5H6J7K8L9Q0W1E2R3T": {"status": "ativo",  "usuario": "usuario18"},
-    "Z0X9C8V7B6N5M4L3K2J1H0G9F": {"status": "ativo", "usuario": "usuario19"},
-    "P1O2I3U4Y5T6R7E8W9Q0A1S2D": {"status": "ativo",  "usuario": "usuario20"},
+# RestDB Configuration
+RESTDB_URL = "https://andaimeconami-0ccc.restdb.io"
+RESTDB_KEY = "35a977b68e9beccc345bc1c7a442b99ca2861"
+HEADERS = {
+    "x-apikey": RESTDB_KEY,
+    "Content-Type": "application/json"
 }
 
-@app.post('/')
-async def verify_key(request: Request):
+class Scaffold(BaseModel):
+    area: str
+    subArea: str
+    startDate: str
+    estimatedEndDate: str
+    leaderName: str
+    executorName: str
+    leaderPhone: str
+    executorPhone: str
+    status: str = "active"
+
+@app.get("/scaffolds")
+async def get_scaffolds():
     try:
-        data = await request.json()
-        key = data.get('key')
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                f"{RESTDB_URL}/rest/scaffolds",
+                headers=HEADERS
+            )
+            
+            if response.status_code != 200:
+                raise HTTPException(status_code=500, detail="Failed to fetch scaffolds")
+            
+            scaffolds = response.json()
+            now = datetime.now()
+            
+            # Process scaffolds to calculate days until expiration
+            for scaffold in scaffolds:
+                end_date = datetime.fromisoformat(scaffold['estimatedEndDate'].replace('Z', '+00:00'))
+                days_until = (end_date - now).days
+                scaffold['daysUntilExpiration'] = max(0, days_until)
+                scaffold['status'] = 'expired' if days_until <= 0 else 'active'
+            
+            return scaffolds
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
-        if not key:
-            return "invalid"
+@app.post("/scaffolds")
+async def create_scaffold(scaffold: Scaffold):
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"{RESTDB_URL}/rest/scaffolds",
+                headers=HEADERS,
+                json=scaffold.dict()
+            )
+            
+            if response.status_code != 201:
+                raise HTTPException(status_code=500, detail="Failed to create scaffold")
+            
+            return response.json()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
-        if key not in valid_keys:
-            return "invalid"
+@app.put("/scaffolds/{scaffold_id}")
+async def update_scaffold(scaffold_id: str, status: str, newEndDate: Optional[str] = None):
+    try:
+        update_data = {"status": status}
+        if newEndDate:
+            update_data["estimatedEndDate"] = newEndDate
 
-        key_info = valid_keys[key]
-        
-        if key_info["status"] == "expirado":
-            return "expirado"
-        
-        if key_info["status"] == "ativo":
-            return key
+        async with httpx.AsyncClient() as client:
+            response = await client.put(
+                f"{RESTDB_URL}/rest/scaffolds/{scaffold_id}",
+                headers=HEADERS,
+                json=update_data
+            )
+            
+            if response.status_code != 200:
+                raise HTTPException(status_code=500, detail="Failed to update scaffold")
+            
+            return response.json()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
-    except Exception:
-        return "invalid"
+@app.delete("/scaffolds/{scaffold_id}")
+async def delete_scaffold(scaffold_id: str):
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.delete(
+                f"{RESTDB_URL}/rest/scaffolds/{scaffold_id}",
+                headers=HEADERS
+            )
+            
+            if response.status_code != 200:
+                raise HTTPException(status_code=500, detail="Failed to delete scaffold")
+            
+            return {"message": "Scaffold deleted successfully"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
-    port = 8000
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    uvicorn.run(app, host="0.0.0.0", port=8000)
