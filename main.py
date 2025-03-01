@@ -152,11 +152,11 @@ async def get_andaimes():
                 raise HTTPException(status_code=500, detail="Falha ao buscar andaimes")
             
             andaimes = response.json()
-            now = datetime.now()
+            now = datetime.now().date()
             
             for andaime in andaimes:
-                end_date = datetime.fromisoformat(andaime['estimatedEndDate'].replace('Z', '+00:00'))
-                start_date = datetime.fromisoformat(andaime['startDate'].replace('Z', '+00:00'))
+                end_date = datetime.fromisoformat(andaime['estimatedEndDate'].replace('Z', '+00:00')).date()
+                start_date = datetime.fromisoformat(andaime['startDate'].replace('Z', '+00:00')).date()
                 
                 # Se a data de início ainda não chegou
                 if start_date > now:
@@ -178,6 +178,14 @@ async def get_andaimes():
 @app.post("/andaimes")
 async def create_andaime(andaime: Andaime):
     try:
+        # Ajusta as datas para manter consistência
+        start_date = datetime.fromisoformat(andaime.startDate.replace('Z', '+00:00'))
+        end_date = datetime.fromisoformat(andaime.estimatedEndDate.replace('Z', '+00:00'))
+        
+        # Garante que as datas estão no formato correto
+        andaime.startDate = start_date.date().isoformat()
+        andaime.estimatedEndDate = end_date.date().isoformat()
+        
         async with httpx.AsyncClient() as client:
             response = await client.post(
                 f"{RESTDB_URL}/rest/scaffolds",
@@ -188,7 +196,13 @@ async def create_andaime(andaime: Andaime):
             if response.status_code != 201:
                 raise HTTPException(status_code=500, detail="Falha ao criar andaime")
             
-            return response.json()
+            result = response.json()
+            
+            # Calcula os dias restantes corretamente
+            dias_restantes = (end_date.date() - start_date.date()).days + 1
+            result['diasAteExpiracao'] = dias_restantes
+            
+            return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
