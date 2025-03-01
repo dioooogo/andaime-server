@@ -160,13 +160,15 @@ async def get_andaimes():
                 
                 # Se a data de início ainda não chegou
                 if start_date > now:
-                    andaime['diasAteExpiracao'] = (end_date - start_date).days
+                    # Incluir o primeiro e último dia no cálculo
+                    andaime['diasAteExpiracao'] = (end_date - start_date).days + 1
                     andaime['status'] = 'active'
                 else:
-                    days_until = (end_date - now).days
+                    # Incluir o dia atual e o último dia no cálculo
+                    days_until = (end_date - now).days + 1
                     andaime['diasAteExpiracao'] = max(0, days_until)
                     # Mantém consistência com o frontend usando 'active' e 'expired'
-                    andaime['status'] = 'expired' if days_until < 0 else 'active'
+                    andaime['status'] = 'expired' if days_until <= 0 else 'active'
             
             return andaimes
     except Exception as e:
