@@ -73,58 +73,63 @@ async def verificar_andaimes_expirados():
             async with httpx.AsyncClient() as client:
                 response = await client.get(f"{RESTDB_URL}/rest/scaffolds", headers=HEADERS)
                 andaimes = response.json()
-                now = datetime.now()
+                now = datetime.now().date()
+
+                print("\n=== VERIFICAÇÃO DE ANDAIMES ===")
+                print(f"Data atual: {now.strftime('%d/%m/%Y')}")
+                print(f"Total de andaimes: {len(andaimes)}")
 
                 for andaime in andaimes:
-                    end_date = datetime.fromisoformat(andaime['estimatedEndDate'].replace('Z', '+00:00'))
-                    start_date = datetime.fromisoformat(andaime['startDate'].replace('Z', '+00:00'))
+                    end_date = datetime.fromisoformat(andaime['estimatedEndDate'].replace('Z', '+00:00')).date()
+                    start_date = datetime.fromisoformat(andaime['startDate'].replace('Z', '+00:00')).date()
                     
-                    # Pula andaimes que ainda não começaram
                     if start_date > now:
+                        print(f"\nAndaime {andaime['area']} ainda não iniciado")
+                        print(f"Início programado: {start_date.strftime('%d/%m/%Y')}")
                         continue
-                        
-                    days_until = (end_date - now).days
+                    
+                    days_until = (end_date - now).days + 1
+                    
+                    print(f"\nAndaime: {andaime['area']}")
+                    print(f"Status: {andaime['status']}")
+                    print(f"Dias restantes: {days_until}")
 
-                    # Notificar quando faltar 3 dias ou menos para vencer
                     if 0 < days_until <= 3:
+                        print(">>> AVISO: Próximo ao vencimento - Enviando notificação")
                         mensagem = (
                             f"ATENÇÃO: Andaime próximo ao vencimento!\n"
                             f"Área: {andaime['area']}\n"
                             f"Subárea: {andaime['subArea']}\n"
-                            f"Data de início: {andaime['startDate']}\n"
-                            f"Data de término: {andaime['estimatedEndDate']}\n"
+                            f"Data de início: {start_date.strftime('%d/%m/%Y')}\n"
+                            f"Data de término: {end_date.strftime('%d/%m/%Y')}\n"
                             f"Dias restantes: {days_until}\n"
                             f"Por favor, providencie a renovação da liberação."
                         )
-                        
                         await enviar_mensagem_whatsapp(andaime['leaderPhone'], mensagem)
                         await enviar_mensagem_whatsapp(andaime['executorPhone'], mensagem)
 
-                    # Notificar no dia do vencimento
                     elif days_until == 0:
+                        print(">>> ALERTA: Vence hoje - Enviando notificação")
                         mensagem = (
                             f"ATENÇÃO: Andaime vence HOJE!\n"
                             f"Área: {andaime['area']}\n"
                             f"Subárea: {andaime['subArea']}\n"
-                            f"Data de início: {andaime['startDate']}\n"
-                            f"Data de término: {andaime['estimatedEndDate']}\n"
+                            f"Data de início: {start_date.strftime('%d/%m/%Y')}\n"
+                            f"Data de término: {end_date.strftime('%d/%m/%Y')}\n"
                             f"É necessário renovar a liberação IMEDIATAMENTE."
                         )
-                        
                         await enviar_mensagem_whatsapp(andaime['leaderPhone'], mensagem)
                         await enviar_mensagem_whatsapp(andaime['executorPhone'], mensagem)
                     
-                    # Atualizar status para expirado e notificar
                     elif days_until < 0:
-                        # Se passou mais de 3 dias do vencimento, deletar o registro
                         if days_until <= -3:
-                            # Deleta o registro diretamente
+                            print(f">>> EXCLUSÃO: Andaime vencido há {abs(days_until)} dias - Removendo registro")
                             await client.delete(
                                 f"{RESTDB_URL}/rest/scaffolds/{andaime['_id']}",
                                 headers=HEADERS
                             )
                         else:
-                            # Apenas atualiza o status se ainda não passaram 3 dias
+                            print(f">>> EXPIRADO: Vencido há {abs(days_until)} dias - Atualizando status")
                             andaime['status'] = 'expired'
                             await client.put(
                                 f"{RESTDB_URL}/rest/scaffolds/{andaime['_id']}",
@@ -132,8 +137,8 @@ async def verificar_andaimes_expirados():
                                 json=andaime
                             )
 
-            # Verificar a cada 12 horas
-            await asyncio.sleep(12 * 60 * 60)
+                print("\n=== FIM DA VERIFICAÇÃO ===\n")
+            await asyncio.sleep(12 * 60 * 60)  # 12 horas
         except Exception as e:
             print(f"Erro na verificação de andaimes: {str(e)}")
             await asyncio.sleep(60)
@@ -152,9 +157,10 @@ async def get_andaimes():
                 raise HTTPException(status_code=500, detail="Falha ao buscar andaimes")
             
             andaimes = response.json()
-            now = datetime.now().date()
+            now = datetime.now().date()  # Usar apenas a data, sem hora
             
             for andaime in andaimes:
+                # Ajusta as datas para considerar apenas a data, sem hora
                 end_date = datetime.fromisoformat(andaime['estimatedEndDate'].replace('Z', '+00:00')).date()
                 start_date = datetime.fromisoformat(andaime['startDate'].replace('Z', '+00:00')).date()
                 
@@ -178,13 +184,29 @@ async def get_andaimes():
 @app.post("/andaimes")
 async def create_andaime(andaime: Andaime):
     try:
-        # Ajusta as datas para manter consistência
-        start_date = datetime.fromisoformat(andaime.startDate.replace('Z', '+00:00'))
-        end_date = datetime.fromisoformat(andaime.estimatedEndDate.replace('Z', '+00:00'))
+        # Ajusta as datas para manter consistência - usando apenas date()
+        start_date = datetime.fromisoformat(andaime.startDate.replace('Z', '+00:00')).date()
+        end_date = datetime.fromisoformat(andaime.estimatedEndDate.replace('Z', '+00:00')).date()
         
         # Garante que as datas estão no formato correto
-        andaime.startDate = start_date.date().isoformat()
-        andaime.estimatedEndDate = end_date.date().isoformat()
+        andaime.startDate = start_date.isoformat()
+        andaime.estimatedEndDate = end_date.isoformat()
+        
+        # Calcula os dias totais e marcos importantes
+        dias_totais = (end_date - start_date).days + 1
+        dias_ate_notificacao = dias_totais - 3  # Notifica 3 dias antes
+        dias_ate_exclusao = dias_totais + 3     # Exclui 3 dias após vencer
+        
+        print(f"\n=== NOVO ANDAIME REGISTRADO ===")
+        print(f"Área: {andaime.area}")
+        print(f"Sub-área: {andaime.subArea}")
+        print(f"Líder: {andaime.leaderName}")
+        print(f"Duração total: {dias_totais} dias")
+        print(f"Início: {start_date.strftime('%d/%m/%Y')}")
+        print(f"Término: {end_date.strftime('%d/%m/%Y')}")
+        print(f"Notificação em: {dias_ate_notificacao} dias")
+        print(f"Exclusão em: {dias_ate_exclusao} dias se não renovado")
+        print("=============================\n")
         
         async with httpx.AsyncClient() as client:
             response = await client.post(
@@ -197,10 +219,7 @@ async def create_andaime(andaime: Andaime):
                 raise HTTPException(status_code=500, detail="Falha ao criar andaime")
             
             result = response.json()
-            
-            # Calcula os dias restantes corretamente
-            dias_restantes = (end_date.date() - start_date.date()).days + 1
-            result['diasAteExpiracao'] = dias_restantes
+            result['diasAteExpiracao'] = dias_totais
             
             return result
     except Exception as e:
